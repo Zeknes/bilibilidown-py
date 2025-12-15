@@ -6,7 +6,7 @@ from io import BytesIO
 from PySide6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, 
                              QLineEdit, QPushButton, QLabel, QProgressBar, QMessageBox, 
                              QDialog, QComboBox, QScrollArea, QFrame, QGraphicsDropShadowEffect,
-                             QGraphicsOpacityEffect, QSizePolicy)
+                             QGraphicsOpacityEffect, QSizePolicy, QTextEdit)
 from PySide6.QtCore import Qt, QThread, Signal, QTimer, QSize, QPropertyAnimation, QEasingCurve, QParallelAnimationGroup, QPoint
 from PySide6.QtGui import QPixmap, QImage, QIcon, QFont, QColor, QPainter, QPainterPath
 
@@ -200,13 +200,26 @@ class GlassCard(QFrame):
         shadow.setColor(QColor(0, 0, 0, 100))
         self.setGraphicsEffect(shadow)
 
-class SearchInput(QLineEdit):
+class SearchInput(QTextEdit):
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setPlaceholderText("Paste Bilibili Video Link (URL / BV)")
-        self.setFixedHeight(50)
-        self.setTextMargins(20, 0, 20, 0)
+        self.setPlaceholderText("Paste Bilibili Video Links (URL / BV) - One per line")
+        self.setFixedHeight(120) # Increased height further
         self.setObjectName("SearchInput")
+        self.setStyleSheet("""
+            QTextEdit {
+                padding: 12px;
+                font-size: 15px;
+                line-height: 1.5;
+                border: 1px solid #d1d1d1;
+                border-radius: 12px;
+                background-color: #FFFFFF;
+                selection-background-color: #B3D7FF;
+            }
+            QTextEdit:focus {
+                border: 2px solid #007AFF;
+            }
+        """)
 
 class MainWindow(QMainWindow):
     def __init__(self):
@@ -219,7 +232,9 @@ class MainWindow(QMainWindow):
             self.setWindowIcon(QIcon(icon_path))
             
         self.downloader = BiliDownloader()
-        self.current_info = None
+        self.video_queue = [] # List of URLs to process
+        self.current_download_index = 0
+        self.is_downloading = False
         self.is_logged_in = False
         
         self.setup_ui()
@@ -288,23 +303,34 @@ class MainWindow(QMainWindow):
         
         content_layout.addLayout(header_row)
 
-        # --- Search Bar ---
+        # --- Search Bar & Buttons ---
         search_container = QWidget()
-        # search_container.setFixedWidth(1000) # Removed fixed width
         search_layout = QHBoxLayout(search_container)
         search_layout.setContentsMargins(0, 0, 0, 0)
         search_layout.setSpacing(16)
+        search_layout.setAlignment(Qt.AlignTop) # Align items to top
         
         self.entry_url = SearchInput()
         search_layout.addWidget(self.entry_url)
         
+        # Button Container (Analyze + Clear?) - Aligned to bottom of input
+        btn_layout = QVBoxLayout()
+        btn_layout.setSpacing(8)
+        btn_layout.setAlignment(Qt.AlignBottom) # Align buttons to bottom of the input box
+        
         self.btn_analyze = QPushButton("ANALYZE")
         self.btn_analyze.setObjectName("PrimaryBtn")
         self.btn_analyze.setCursor(Qt.PointingHandCursor)
-        self.btn_analyze.setFixedWidth(120) # Smaller button
-        self.btn_analyze.setFixedHeight(46) # Smaller height
+        self.btn_analyze.setFixedWidth(120)
+        self.btn_analyze.setFixedHeight(46)
         self.btn_analyze.clicked.connect(self.analyze_video)
-        search_layout.addWidget(self.btn_analyze)
+        btn_layout.addWidget(self.btn_analyze)
+        
+        # Add a little spacer at the bottom so it aligns perfectly with the bottom of input box if needed, 
+        # but Qt layouts usually handle this if we set alignment on the layout item.
+        # Actually, if SearchInput is 120px, and button is 46px.
+        
+        search_layout.addLayout(btn_layout)
         
         content_layout.addWidget(search_container)
         content_layout.addSpacing(4) # Reduce spacing
@@ -345,8 +371,17 @@ class MainWindow(QMainWindow):
 
         # Quality (Wider)
         self.combo_quality = QComboBox()
-        self.combo_quality.addItems(["1080P", "720P"])
-        self.combo_quality.setFixedWidth(140) # Wider as requested
+        # "Highest" is default.
+        # Map labels to QN values or special markers. 
+        # 127: 8K, 120: 4K, 116: 1080P60, 80: 1080P, 64: 720P
+        self.combo_quality.addItem("Highest", 999)
+        self.combo_quality.addItem("8K", 127)
+        self.combo_quality.addItem("4K", 120)
+        self.combo_quality.addItem("1080P60", 116)
+        self.combo_quality.addItem("1080P", 80)
+        self.combo_quality.addItem("720P", 64)
+        
+        self.combo_quality.setFixedWidth(140)
         controls_row.addWidget(self.combo_quality)
         
         # Download Button
@@ -659,54 +694,61 @@ class MainWindow(QMainWindow):
             self.lbl_avatar.setPixmap(rounded)
 
     def analyze_video(self):
-        url = self.entry_url.text().strip()
-        if not url:
+        text = self.entry_url.toPlainText().strip()
+        if not text:
             return
+            
+        # Parse lines
+        lines = [line.strip() for line in text.splitlines() if line.strip()]
+        if not lines:
+            return
+
+        self.video_queue = lines
+        self.current_info_map = {} # Store info for videos
         
         self.btn_analyze.setEnabled(False)
         self.btn_analyze.setText("Analyzing...")
         
-        self.worker = WorkerThread(self.downloader.get_video_info, url)
-        self.worker.finished.connect(self.on_info_received)
+        # Analyze the first video to show preview
+        first_url = self.video_queue[0]
+        self.worker = WorkerThread(self.downloader.get_video_info, first_url)
+        self.worker.finished.connect(lambda info: self.on_info_received(info, len(lines)))
         self.worker.error.connect(self.on_error)
         self.worker.start()
 
-    def on_info_received(self, info):
-        self.current_info = info
+    def on_info_received(self, info, total_count):
+        self.current_info_map[0] = info # Store info for the first video
+        
         self.btn_analyze.setEnabled(True)
         self.btn_analyze.setText("Analyze")
         
         # Trigger animation instead of just setVisible
         self.animate_content_entry()
         
-        self.lbl_video_title.setText(info['title'])
+        title = info['title']
+        if total_count > 1:
+            title = f"[{total_count} Videos] " + title
+            
+        self.lbl_video_title.setText(title)
         self.lbl_video_desc.setText(info.get('desc', '')[:120] + '...')
         
-        self.probe_worker = WorkerThread(self.downloader.get_play_url, info['bvid'], info['cid'], 120)
-        self.probe_worker.finished.connect(self.on_capabilities_received)
-        self.probe_worker.start()
-        
+        # Update download button text
+        if total_count > 1:
+            self.btn_download.setText(f"Download All ({total_count})")
+        else:
+            self.btn_download.setText("Download")
+
+        # Load thumbnail
         self.thumb_worker = WorkerThread(self.load_image, info['pic'])
         self.thumb_worker.finished.connect(self.on_thumb_loaded)
         self.thumb_worker.start()
+        
+        # We don't need to probe capabilities for the dropdown anymore
+        # as the dropdown is now fixed preferences.
 
     def on_capabilities_received(self, play_info):
-        available_qns = set()
-        if 'dash' in play_info and 'video' in play_info['dash']:
-            for stream in play_info['dash']['video']:
-                available_qns.add(stream['id'])
-        
-        if 'accept_quality' in play_info and 'accept_description' in play_info:
-            qualities = play_info['accept_quality']
-            descriptions = play_info['accept_description']
-            
-            self.combo_quality.clear()
-            for qn, desc in zip(qualities, descriptions):
-                if 'dash' not in play_info or qn in available_qns:
-                    self.combo_quality.addItem(desc, qn)
-            
-            if self.combo_quality.count() > 0:
-                self.combo_quality.setCurrentIndex(0)
+        # Deprecated logic as combo box is fixed now
+        pass
 
     def load_image(self, url):
         try:
@@ -719,7 +761,58 @@ class MainWindow(QMainWindow):
         if data:
             pixmap = QPixmap()
             pixmap.loadFromData(data)
-            self.lbl_thumb.setPixmap(pixmap.scaled(self.lbl_thumb.size(), Qt.KeepAspectRatioByExpanding, Qt.SmoothTransformation))
+            
+            # Create a new pixmap for the potentially stacked effect
+            # Size of the container
+            w, h = 320, 180
+            final_pixmap = QPixmap(w, h)
+            final_pixmap.fill(Qt.transparent)
+            
+            painter = QPainter(final_pixmap)
+            painter.setRenderHint(QPainter.Antialiasing)
+            painter.setRenderHint(QPainter.SmoothPixmapTransform)
+            
+            total_videos = len(self.video_queue) if hasattr(self, 'video_queue') else 1
+            
+            # Stack logic: Draw up to 2 cards behind if multiple videos
+            # Stack 2 (furthest back)
+            if total_videos >= 3:
+                painter.save()
+                painter.translate(20, -10) # Offset right and up
+                painter.scale(0.9, 0.9) # Scale down
+                painter.setOpacity(0.5)
+                
+                path = QPainterPath()
+                path.addRoundedRect(0, 0, w, h, 12, 12)
+                painter.setClipPath(path)
+                scaled_img = pixmap.scaled(w, h, Qt.KeepAspectRatioByExpanding, Qt.SmoothTransformation)
+                painter.drawPixmap(0, 0, scaled_img)
+                painter.restore()
+
+            # Stack 1 (middle)
+            if total_videos >= 2:
+                painter.save()
+                painter.translate(10, -5) # Offset right & up
+                painter.scale(0.95, 0.95)
+                painter.setOpacity(0.7)
+                
+                path = QPainterPath()
+                path.addRoundedRect(0, 0, w, h, 12, 12)
+                painter.setClipPath(path)
+                scaled_img = pixmap.scaled(w, h, Qt.KeepAspectRatioByExpanding, Qt.SmoothTransformation)
+                painter.drawPixmap(0, 0, scaled_img)
+                painter.restore()
+
+            # Top Card (Main)
+            path = QPainterPath()
+            path.addRoundedRect(0, 0, w, h, 12, 12)
+            painter.setClipPath(path)
+            scaled_img = pixmap.scaled(w, h, Qt.KeepAspectRatioByExpanding, Qt.SmoothTransformation)
+            painter.drawPixmap(0, 0, scaled_img)
+            
+            painter.end()
+            
+            self.lbl_thumb.setPixmap(final_pixmap)
 
     def on_error(self, err_msg):
         self.btn_analyze.setEnabled(True)
@@ -729,24 +822,70 @@ class MainWindow(QMainWindow):
         QMessageBox.critical(self, "Error", err_msg)
 
     def start_download(self):
-        if not self.current_info:
+        if not self.video_queue:
             return
             
         self.btn_download.setEnabled(False)
-        self.btn_download.setText("Starting...")
+        self.btn_download.setText("Initializing...")
         
-        qn = self.combo_quality.currentData()
-        if qn is None: qn = 80
+        self.current_download_index = 0
+        self.is_downloading = True
         
-        self.play_worker = WorkerThread(self.downloader.get_play_url, self.current_info['bvid'], self.current_info['cid'], qn)
-        self.play_worker.finished.connect(lambda info: self.on_play_url_received(info, qn))
-        self.play_worker.error.connect(self.on_error)
+        self.process_next_download()
+
+    def process_next_download(self):
+        if self.current_download_index >= len(self.video_queue):
+            self.is_downloading = False
+            self.btn_download.setEnabled(True)
+            self.btn_download.setText("Download")
+            self.lbl_status.setText("All Done")
+            QMessageBox.information(self, "Success", "All downloads completed!")
+            # Clear input and reset state
+            self.entry_url.clear()
+            self.video_queue = []
+            self.current_info_map = {}
+            # Reset UI to initial state if desired, or just keep last preview.
+            # Keeping preview is fine, but clearing input implies reset.
+            return
+            
+        url = self.video_queue[self.current_download_index]
+        self.lbl_status.setText(f"Processing ({self.current_download_index + 1}/{len(self.video_queue)})...")
+        
+        # We need to get info first if we don't have it (we only have it for the first one usually)
+        if self.current_download_index in self.current_info_map:
+            self.process_download_for_info(self.current_info_map[self.current_download_index])
+        else:
+            # Fetch info
+            self.info_worker = WorkerThread(self.downloader.get_video_info, url)
+            self.info_worker.finished.connect(self.on_download_info_received)
+            self.info_worker.error.connect(self.on_download_error)
+            self.info_worker.start()
+
+    def on_download_info_received(self, info):
+        self.current_info_map[self.current_download_index] = info
+        self.process_download_for_info(info)
+
+    def process_download_for_info(self, info):
+        target_qn = self.combo_quality.currentData()
+        if target_qn is None: target_qn = 127 # Default to highest possible check if not set
+        
+        # We request highest possible quality metadata to check what's available
+        # 127 is 8K, asking for it usually returns all available DASH formats
+        self.play_worker = WorkerThread(self.downloader.get_play_url, info['bvid'], info['cid'], 127)
+        self.play_worker.finished.connect(lambda play_info: self.on_play_url_received(play_info, info, target_qn))
+        self.play_worker.error.connect(self.on_download_error)
         self.play_worker.start()
 
-    def on_play_url_received(self, play_info, requested_qn):
-        title = self.current_info['title']
+    def on_download_error(self, err_msg):
+        print(f"Error downloading {self.current_download_index}: {err_msg}")
+        # Skip to next
+        self.current_download_index += 1
+        self.process_next_download()
+
+    def on_play_url_received(self, play_info, info, target_qn):
+        title = info['title']
         filename = "".join([c for c in title if c.isalpha() or c.isdigit() or c==' ']).rstrip()
-        if not filename: filename = self.current_info['bvid']
+        if not filename: filename = info['bvid']
         
         downloads_dir = os.path.expanduser("~/Downloads")
         if not os.path.exists(downloads_dir):
@@ -765,17 +904,23 @@ class MainWindow(QMainWindow):
         if 'dash' in play_info:
             is_dash = True
             video_streams = play_info['dash']['video']
+            # Sort by ID descending (Highest quality first)
             video_streams.sort(key=lambda x: x['id'], reverse=True)
-            selected_video = video_streams[0]
-            for stream in video_streams:
-                if stream['id'] == requested_qn:
-                    selected_video = stream
-                    break
-            if selected_video['id'] != requested_qn:
+            
+            selected_video = None
+            
+            if target_qn == 999: # Highest
+                selected_video = video_streams[0]
+            else:
+                # Find exact match or fallback to lower
                 for stream in video_streams:
-                     if stream['id'] <= requested_qn:
+                    if stream['id'] <= target_qn:
                         selected_video = stream
                         break
+                
+                # If nothing found (e.g. target is lower than lowest available? unlikely but possible), pick lowest
+                if not selected_video:
+                    selected_video = video_streams[-1]
 
             video_url = selected_video['base_url']
             audio_streams = play_info['dash']['audio']
@@ -794,21 +939,20 @@ class MainWindow(QMainWindow):
             download_url = play_info['durl'][0]['url']
             filepath = os.path.join(downloads_dir, f"{filename}.mp4")
         else:
-            self.on_error("No download URL found")
+            self.on_download_error("No download URL found")
             return
 
         self.dl_worker = DownloadWorker(self.downloader, download_url, filepath, is_dash, dash_info)
         self.dl_worker.progress.connect(self.progress_bar.setValue)
         self.dl_worker.status.connect(self.lbl_status.setText)
         self.dl_worker.finished.connect(self.on_download_finished)
-        self.dl_worker.error.connect(self.on_error)
+        self.dl_worker.error.connect(self.on_download_error)
         self.dl_worker.start()
 
     def on_download_finished(self, path):
-        self.btn_download.setEnabled(True)
-        self.btn_download.setText("Download")
-        self.lbl_status.setText("Done")
-        QMessageBox.information(self, "Success", f"Download completed!\nSaved to: {path}")
+        # One download done, move to next
+        self.current_download_index += 1
+        self.process_next_download()
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)

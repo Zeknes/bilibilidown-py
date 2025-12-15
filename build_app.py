@@ -4,59 +4,23 @@ import subprocess
 import sys
 
 import shutil
+from PIL import Image
 
 def create_icns(png_path, icon_name="icon"):
     """
-    Generate .icns from a .png file on macOS using sips and iconutil.
+    Generate .icns from a .png file using Pillow.
     """
     if not os.path.exists(png_path):
         return None
 
-    iconset_name = f"{icon_name}.iconset"
-    if os.path.exists(iconset_name):
-        shutil.rmtree(iconset_name)
-    os.makedirs(iconset_name)
-
-    # Standard sizes for macOS icons
-    sizes = [16, 32, 64, 128, 256, 512, 1024]
+    icns_path = f"{icon_name}.icns"
     
     try:
-        # Check source image size
-        try:
-            out = subprocess.check_output(["sips", "-g", "pixelHeight", png_path])
-            height = int(out.decode().split(":")[-1].strip())
-        except:
-            height = 1024 # Assume large if check fails
-
-        for size in sizes:
-            # Normal resolution
-            out_file = os.path.join(iconset_name, f"icon_{size}x{size}.png")
-            try:
-                subprocess.run(["sips", "-z", str(size), str(size), png_path, "--out", out_file], check=True, capture_output=True)
-            except subprocess.CalledProcessError:
-                print(f"Warning: Failed to resize to {size}x{size}")
-
-            # High resolution (Retina)
-            if size <= 512:
-                out_file_2x = os.path.join(iconset_name, f"icon_{size}x{size}@2x.png")
-                try:
-                    subprocess.run(["sips", "-z", str(size*2), str(size*2), png_path, "--out", out_file_2x], check=True, capture_output=True)
-                except subprocess.CalledProcessError:
-                    print(f"Warning: Failed to resize to {size*2}x{size*2}")
-
-        # Generate .icns
-
-        icns_path = f"{icon_name}.icns"
-        subprocess.run(["iconutil", "-c", "icns", iconset_name, "-o", icns_path], check=True)
-        
-        # Cleanup
-        shutil.rmtree(iconset_name)
+        img = Image.open(png_path)
+        img.save(icns_path, format='ICNS')
         return icns_path
-
     except Exception as e:
-        print(f"Error creating icns: {e}")
-        if os.path.exists(iconset_name):
-            shutil.rmtree(iconset_name)
+        print(f"Error creating icns with Pillow: {e}")
         return None
 
 def build():
