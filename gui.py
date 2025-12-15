@@ -12,6 +12,16 @@ from PySide6.QtGui import QPixmap, QImage, QIcon, QFont, QColor, QPainter, QPain
 
 from core import BiliDownloader
 
+def resource_path(relative_path):
+    """ Get absolute path to resource, works for dev and for PyInstaller """
+    try:
+        # PyInstaller creates a temp folder and stores path in _MEIPASS
+        base_path = sys._MEIPASS
+    except Exception:
+        base_path = os.path.abspath(".")
+
+    return os.path.join(base_path, relative_path)
+
 class WorkerThread(QThread):
     finished = Signal(object)
     error = Signal(str)
@@ -204,8 +214,9 @@ class MainWindow(QMainWindow):
         self.setWindowTitle("BiliDown")
         self.resize(900, 700)
         
-        if os.path.exists("bili.png"):
-            self.setWindowIcon(QIcon("bili.png"))
+        icon_path = resource_path("bili.png")
+        if os.path.exists(icon_path):
+            self.setWindowIcon(QIcon(icon_path))
             
         self.downloader = BiliDownloader()
         self.current_info = None
