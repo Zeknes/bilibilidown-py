@@ -5,6 +5,50 @@ import shutil
 import platform
 import multiprocessing
 
+def create_dmg(app_path):
+    """
+    Create a DMG file for macOS distribution using create-dmg tool
+    """
+    if not os.path.exists(app_path):
+        print("❌ App bundle not found, cannot create DMG.")
+        return
+
+    dmg_name = "BiliDown-Installer.dmg"
+    dmg_path = os.path.join(os.path.dirname(app_path), dmg_name)
+    
+    if os.path.exists(dmg_path):
+        os.remove(dmg_path)
+        
+    print(f"📦 Creating DMG installer: {dmg_name}...")
+    
+    # Check if create-dmg is installed
+    try:
+        subprocess.check_call(["which", "create-dmg"], stdout=subprocess.DEVNULL)
+    except subprocess.CalledProcessError:
+        print("⚠️ 'create-dmg' tool not found. Skipping DMG creation.")
+        print("💡 Run 'brew install create-dmg' to enable this feature.")
+        return
+
+    cmd = [
+        "create-dmg",
+        "--volname", "BiliDown Installer",
+        "--volicon", "bili.png",
+        "--window-pos", "200", "120",
+        "--window-size", "800", "400",
+        "--icon-size", "100",
+        "--icon", "BiliDown.app", "200", "190",
+        "--hide-extension", "BiliDown.app",
+        "--app-drop-link", "600", "185",
+        dmg_path,
+        app_path
+    ]
+    
+    try:
+        subprocess.check_call(cmd)
+        print(f"✅ DMG created successfully: {dmg_path}")
+    except subprocess.CalledProcessError as e:
+        print(f"❌ Failed to create DMG: {e}")
+
 def build():
     print("🚀 Starting Nuitka build...")
     
@@ -37,8 +81,13 @@ def build():
             "--macos-create-app-bundle",
             "--macos-app-name=BiliDown",
             "--macos-app-icon=bili.png",
+            "--disable-console",
         ])
         output_artifact = "BiliDown.app"
+        
+        # Nuitka 2.x sometimes names the app based on script name even with --macos-app-name
+        # We'll check for both
+        possible_artifacts = ["BiliDown.app", "main.app"]
         
     elif system_os == "Linux":
         # Linux specific flags
@@ -63,11 +112,25 @@ def build():
         subprocess.check_call(cmd)
         print("\n✅ Build successful!")
         
-        artifact_path = os.path.join(os.getcwd(), 'dist_nuitka', output_artifact)
+        # Determine actual artifact path
+        dist_dir = os.path.join(os.getcwd(), 'dist_nuitka')
+        artifact_path = os.path.join(dist_dir, output_artifact)
+        
+        if system_os == "Darwin":
+             # Check if Nuitka created main.app instead of BiliDown.app
+            fallback_path = os.path.join(dist_dir, "main.app")
+            if not os.path.exists(artifact_path) and os.path.exists(fallback_path):
+                print(f"⚠️ Nuitka created 'main.app', renaming to '{output_artifact}'...")
+                shutil.move(fallback_path, artifact_path)
+
         print(f"Artifact location: {artifact_path}")
         
+        # Create DMG for macOS
+        if system_os == "Darwin" and output_artifact.endswith(".app"):
+            create_dmg(artifact_path)
+        
         # Open the output folder
-        output_dir = os.path.join(os.getcwd(), 'dist_nuitka')
+        output_dir = dist_dir
         try:
             if system_os == "Darwin":
                 subprocess.call(["open", output_dir])
