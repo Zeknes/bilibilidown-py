@@ -1,6 +1,7 @@
 import requests
 import re
 import os
+import sys
 import subprocess
 import time
 import qrcode
@@ -167,15 +168,46 @@ class BiliDownloader:
                 if progress_callback and total_size > 0:
                     progress_callback(wrote, total_size)
 
+    def get_ffmpeg_path(self):
+        """Get the path to the ffmpeg executable."""
+        # Check if running as compiled (Nuitka)
+        if "__compiled__" in globals() or getattr(sys, 'frozen', False):
+            base_path = os.path.dirname(os.path.abspath(sys.argv[0]))
+            
+            # Check potential locations in the bundle
+            possible_paths = [
+                os.path.join(base_path, "ffmpeg"),       # Linux/macOS
+                os.path.join(base_path, "ffmpeg.exe"),   # Windows
+            ]
+            
+            for path in possible_paths:
+                if os.path.exists(path) and os.access(path, os.X_OK):
+                    return path
+        
+        # Check if ffmpeg is in the current directory (dev mode)
+        cwd_ffmpeg = os.path.join(os.getcwd(), "ffmpeg")
+        if os.path.exists(cwd_ffmpeg) and os.access(cwd_ffmpeg, os.X_OK):
+            return cwd_ffmpeg
+            
+        # Fallback to system PATH
+        return "ffmpeg"
+
     def merge_video_audio(self, video_path, audio_path, output_path):
         """Merges video and audio using ffmpeg."""
+        ffmpeg_path = self.get_ffmpeg_path()
         cmd = [
-            'ffmpeg', '-y', # Overwrite output
+            ffmpeg_path, '-y', # Overwrite output
             '-i', video_path,
             '-i', audio_path,
             '-c:v', 'copy',
             '-c:a', 'aac',
             output_path
         ]
-        subprocess.check_call(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        # On Windows, we might need to prevent the console window from popping up
+        startupinfo = None
+        if os.name == 'nt':
+            startupinfo = subprocess.STARTUPINFO()
+            startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+            
+        subprocess.check_call(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, startupinfo=startupinfo)
 

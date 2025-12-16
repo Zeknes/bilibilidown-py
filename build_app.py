@@ -437,6 +437,27 @@ def build():
 
         print(f"Artifact location: {artifact_path}")
         
+        # Bundle ffmpeg
+        print("🎥 Bundling ffmpeg...")
+        ffmpeg_src = shutil.which("ffmpeg")
+        if ffmpeg_src:
+            if system_os == "Darwin":
+                # For macOS .app, put in Contents/MacOS
+                dest_dir = os.path.join(artifact_path, "Contents", "MacOS")
+                os.makedirs(dest_dir, exist_ok=True)
+                shutil.copy2(ffmpeg_src, os.path.join(dest_dir, "ffmpeg"))
+            elif system_os == "Linux":
+                # For Linux, put in main.dist
+                dest_dir = os.path.dirname(artifact_path)
+                shutil.copy2(ffmpeg_src, os.path.join(dest_dir, "ffmpeg"))
+            elif system_os == "Windows":
+                 # For Windows, put in main.dist
+                 dest_dir = os.path.dirname(artifact_path)
+                 shutil.copy2(ffmpeg_src, os.path.join(dest_dir, "ffmpeg.exe"))
+            print(f"✅ ffmpeg bundled from {ffmpeg_src}")
+        else:
+            print("⚠️ ffmpeg not found in PATH. It will not be bundled.")
+
         # Create DMG for macOS
         if system_os == "Darwin" and output_artifact.endswith(".app"):
             create_dmg(artifact_path)
