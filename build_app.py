@@ -361,6 +361,17 @@ def build():
             if not os.path.exists(artifact_path) and os.path.exists(fallback_path):
                 print(f"⚠️ Nuitka created 'main.app', renaming to '{output_artifact}'...")
                 shutil.move(fallback_path, artifact_path)
+                
+        elif system_os == "Linux":
+            # Check if Nuitka created main.bin instead of main
+            # We need to ensure the binary is named 'main' because our .desktop files and scripts expect it
+            dist_folder = os.path.join(dist_dir, "main.dist")
+            binary_path = os.path.join(dist_folder, "main")
+            binary_bin_path = os.path.join(dist_folder, "main.bin")
+            
+            if not os.path.exists(binary_path) and os.path.exists(binary_bin_path):
+                 print("⚠️ Nuitka created 'main.bin', renaming to 'main'...")
+                 shutil.move(binary_bin_path, binary_path)
 
         print(f"Artifact location: {artifact_path}")
         
@@ -370,8 +381,10 @@ def build():
             
         # Create DEB and RPM for Linux
         if system_os == "Linux":
-            create_deb(artifact_path, dist_dir)
-            create_rpm(artifact_path, dist_dir)
+            # For Linux standalone, we package the whole 'main.dist' directory
+            dist_folder = os.path.join(dist_dir, "main.dist")
+            create_deb(dist_folder, dist_dir)
+            create_rpm(dist_folder, dist_dir)
         
         # Open the output folder
         output_dir = dist_dir
