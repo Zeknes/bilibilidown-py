@@ -1,1 +1,4 @@
-pyinstaller
+nuitka
+ordered-set
+zstandard
+imageio

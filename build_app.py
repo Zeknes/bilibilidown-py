@@ -1,78 +1,51 @@
 import os
-import platform
-import subprocess
 import sys
-
+import subprocess
 import shutil
-from PIL import Image
-
-def create_icns(png_path, icon_name="icon"):
-    """
-    Generate .icns from a .png file using Pillow.
-    """
-    if not os.path.exists(png_path):
-        return None
-
-    icns_path = f"{icon_name}.icns"
-    
-    try:
-        img = Image.open(png_path)
-        img.save(icns_path, format='ICNS')
-        return icns_path
-    except Exception as e:
-        print(f"Error creating icns with Pillow: {e}")
-        return None
 
 def build():
-    system = platform.system()
-    sep = os.path.sep
+    print("🚀 Starting Nuitka build...")
     
-    print(f"Detected system: {system}")
-    
-    # Common PyInstaller options
-    # -F: One file
-    # -w: No console window (GUI only)
-    # --add-data: Add bili.png if exists
-    # --name: Output name
-    
+    # Check if ccache is available (optional but recommended for speed)
+    # subprocess.call(["brew", "install", "ccache"]) 
+
     cmd = [
-        "pyinstaller",
-        "-F",
-        "-w",
-        "--name", "BiliDown",
-        "--clean",
-        "main.py"
+        sys.executable, "-m", "nuitka",
+        "--standalone",
+        "--macos-create-app-bundle",  # Create .app bundle (best for macOS)
+        "--enable-plugin=pyside6",    # Smart dependency handling for PySide6
+        "--show-progress",
+        "--show-memory",
+        "--output-dir=dist_nuitka",
+        "--macos-app-name=BiliDown",
+        "--macos-app-icon=bili.png",  # Nuitka handles png to icns conversion automatically if capable
+        "--include-data-file=bili.png=bili.png",
+        "--main=main.py",
     ]
     
-    # Add icon if exists
-    icon_path = "bili.png"
-    if os.path.exists(icon_path):
-        if system == "Windows":
-            # On Windows, use icon for exe
-            cmd.extend(["--icon", icon_path])
-            cmd.extend(["--add-data", f"{icon_path};."])
-        else:
-            # On Mac/Linux, add data
-            cmd.extend(["--add-data", f"{icon_path}:."])
-            if system == "Darwin":
-                 # Generate .icns for macOS .app bundle
-                 icns_path = create_icns(icon_path, "BiliDown")
-                 if icns_path and os.path.exists(icns_path):
-                     print(f"Generated icon: {icns_path}")
-                     cmd.extend(["--icon", icns_path])
-                 else:
-                     print("Failed to generate .icns, app icon might be missing.")
-
+    # If you really want a single binary file (not .app bundle) on macOS, 
+    # you can use --onefile, but .app is standard for GUI.
+    # Nuitka's .app bundle startup is much faster than PyInstaller's onefile.
     
-    print("Running command:", " ".join(cmd))
+    print(f"Running command: {' '.join(cmd)}")
     
     try:
         subprocess.check_call(cmd)
-        print("\nBuild successful!")
-        print(f"Executable is in: {os.path.join(os.getcwd(), 'dist')}")
+        print("\n✅ Build successful!")
+        print(f"App is located at: {os.path.join(os.getcwd(), 'dist_nuitka', 'BiliDown.app')}")
+        
+        # Open the folder
+        subprocess.call(["open", "dist_nuitka"])
+        
     except subprocess.CalledProcessError as e:
-        print(f"\nBuild failed with error code {e.returncode}")
+        print(f"\n❌ Build failed with error code {e.returncode}")
         sys.exit(1)
 
 if __name__ == "__main__":
+    # Clean previous build
+    if os.path.exists("dist_nuitka"):
+        shutil.rmtree("dist_nuitka")
+    if os.path.exists("main.build"):
+        shutil.rmtree("main.build")
+        
     build()
