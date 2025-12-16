@@ -7,8 +7,8 @@ from PySide6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, 
                              QLineEdit, QPushButton, QLabel, QProgressBar, QMessageBox, 
                              QDialog, QComboBox, QScrollArea, QFrame, QGraphicsDropShadowEffect,
                              QGraphicsOpacityEffect, QSizePolicy, QTextEdit)
-from PySide6.QtCore import Qt, QThread, Signal, QTimer, QSize, QPropertyAnimation, QEasingCurve, QParallelAnimationGroup, QPoint
-from PySide6.QtGui import QPixmap, QImage, QIcon, QFont, QColor, QPainter, QPainterPath
+from PySide6.QtCore import Qt, QThread, Signal, QTimer, QSize, QPropertyAnimation, QEasingCurve, QParallelAnimationGroup, QPoint, QPointF, QRectF
+from PySide6.QtGui import QPixmap, QImage, QIcon, QFont, QColor, QPainter, QPainterPath, QFontMetrics, QTransform, QPolygonF
 
 from core import BiliDownloader
 
@@ -21,6 +21,90 @@ def resource_path(relative_path):
         base_path = os.path.abspath(".")
 
     return os.path.join(base_path, relative_path)
+
+class Toast(QWidget):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowFlags(Qt.FramelessWindowHint | Qt.SubWindow)
+        self.setAttribute(Qt.WA_TranslucentBackground)
+        self.setAttribute(Qt.WA_ShowWithoutActivating)
+        
+        self.timer = QTimer(self)
+        self.timer.setSingleShot(True)
+        self.timer.timeout.connect(self.close_toast)
+        
+        self.message = ""
+        self.is_success = True
+        self.opacity_effect = QGraphicsOpacityEffect(self)
+        self.setGraphicsEffect(self.opacity_effect)
+        self.opacity_effect.setOpacity(0)
+        self.animation = None
+        self.hide()
+
+    def show_message(self, text, is_success=True, duration=1000):
+        if self.animation:
+            self.animation.stop()
+            
+        self.message = text
+        self.is_success = is_success
+        self.adjustSize()
+        
+        if self.parent():
+            parent_rect = self.parent().rect()
+            self.move(
+                parent_rect.center().x() - self.width() // 2,
+                parent_rect.bottom() - 100
+            )
+        
+        self.show()
+        self.raise_()
+        
+        self.opacity_effect.setOpacity(0)
+        self.animation = QPropertyAnimation(self.opacity_effect, b"opacity")
+        self.animation.setStartValue(0)
+        self.animation.setEndValue(1)
+        self.animation.setDuration(200)
+        self.animation.start()
+        
+        self.timer.start(duration)
+        
+    def close_toast(self):
+        if self.animation:
+            self.animation.stop()
+            
+        self.animation = QPropertyAnimation(self.opacity_effect, b"opacity")
+        self.animation.setStartValue(self.opacity_effect.opacity())
+        self.animation.setEndValue(0)
+        self.animation.setDuration(200)
+        self.animation.finished.connect(self.hide)
+        self.animation.start()
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing)
+        
+        rect = self.rect()
+        # Green for success, Red for error
+        bg_color = QColor("#34C759") if self.is_success else QColor("#FF3B30")
+        
+        painter.setBrush(bg_color)
+        painter.setPen(Qt.NoPen)
+        painter.drawRoundedRect(rect, 8, 8)
+        
+        painter.setPen(Qt.white)
+        font = self.font()
+        font.setPointSize(12)
+        font.setBold(True)
+        painter.setFont(font)
+        painter.drawText(rect, Qt.AlignCenter, self.message)
+        
+    def sizeHint(self):
+        font = self.font()
+        font.setPointSize(12)
+        font.setBold(True)
+        metrics = QFontMetrics(font)
+        width = metrics.horizontalAdvance(self.message) + 40
+        return QSize(max(120, width), 40)
 
 class WorkerThread(QThread):
     finished = Signal(object)
@@ -105,10 +189,6 @@ class LoginDialog(QDialog):
         self.authenticator = authenticator
         self.setWindowTitle("Login to Bilibili")
         self.setFixedSize(360, 480)
-        self.setStyleSheet("""
-            QDialog { background-color: #FFFFFF; }
-            QLabel { font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
-        """)
         self.setup_ui()
         self.start_login_process()
 
@@ -119,26 +199,13 @@ class LoginDialog(QDialog):
         
         title = QLabel("Scan QR Code")
         title.setAlignment(Qt.AlignCenter)
-        title.setStyleSheet("font-size: 24px; font-weight: 700; color: #1D1D1F; letter-spacing: -0.5px;")
         layout.addWidget(title)
         
         self.lbl_info = QLabel("Open Bilibili App on your phone\nand scan the QR code to login.")
         self.lbl_info.setAlignment(Qt.AlignCenter)
-        self.lbl_info.setStyleSheet("color: #86868B; font-size: 14px; line-height: 1.4;")
         layout.addWidget(self.lbl_info)
         
         qr_container = QFrame()
-        qr_container.setStyleSheet("""
-            background-color: white; 
-            border-radius: 20px; 
-            border: 1px solid rgba(0,0,0,0.05);
-        """)
-        # Shadow for QR
-        qr_shadow = QGraphicsDropShadowEffect(qr_container)
-        qr_shadow.setBlurRadius(30)
-        qr_shadow.setOffset(0, 8)
-        qr_shadow.setColor(QColor(0,0,0,15))
-        qr_container.setGraphicsEffect(qr_shadow)
         
         qr_layout = QVBoxLayout(qr_container)
         qr_layout.setContentsMargins(24, 24, 24, 24)
@@ -152,7 +219,6 @@ class LoginDialog(QDialog):
         
         self.lbl_status = QLabel("Initializing...")
         self.lbl_status.setAlignment(Qt.AlignCenter)
-        self.lbl_status.setStyleSheet("color: #007AFF; font-weight: 600; font-size: 14px;")
         layout.addWidget(self.lbl_status)
 
     def start_login_process(self):
@@ -203,8 +269,9 @@ class GlassCard(QFrame):
 class SearchInput(QTextEdit):
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setPlaceholderText("Paste Bilibili Video Links (URL / BV) - One per line")
-        self.setFixedHeight(120) # Increased height further
+        self.placeholder_text = "Paste Bilibili Video Links (URL / BV) - One per line"
+        self.setPlaceholderText(self.placeholder_text)
+        self.setFixedHeight(120) 
         self.setObjectName("SearchInput")
         self.setStyleSheet("""
             QTextEdit {
@@ -220,6 +287,103 @@ class SearchInput(QTextEdit):
                 border: 2px solid #007AFF;
             }
         """)
+
+    def focusInEvent(self, e):
+        super().focusInEvent(e)
+
+    def focusOutEvent(self, e):
+        super().focusOutEvent(e)
+        # Re-apply placeholder if empty (Qt handles this natively usually but user reported issues)
+        if not self.toPlainText():
+             pass
+
+class TrapezoidImageList(QWidget):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.images = [] # List of QPixmap
+        self.setFixedHeight(220) # Height to accommodate cards
+        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+
+    def set_images(self, pixmaps):
+        self.images = pixmaps
+        self.update()
+
+    def paintEvent(self, event):
+        if not self.images:
+            return
+            
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing)
+        painter.setRenderHint(QPainter.SmoothPixmapTransform)
+        
+        # Card settings
+        card_w = 280 
+        card_h = 158 # 16:9 approx
+        
+        # Calculate dynamic overlap/spacing
+        # We have available width: self.width()
+        # We need to fit n images.
+        # total_width = start_x + (n-1)*step_x + card_w + padding_right
+        
+        n = len(self.images)
+        start_x = 20
+        padding_right = 20
+        available_w = self.width()
+        
+        # Standard step (if space permits)
+        # Standard overlap ~60px -> step = 220
+        standard_step = 220
+        
+        if n <= 1:
+            step_x = standard_step
+        else:
+            required_w_standard = start_x + (n - 1) * standard_step + card_w + padding_right
+            
+            if required_w_standard <= available_w:
+                step_x = standard_step
+            else:
+                # Squeeze
+                # available_w = start_x + (n-1)*step_x + card_w + padding_right
+                # (n-1)*step_x = available_w - start_x - card_w - padding_right
+                available_for_steps = available_w - start_x - card_w - padding_right
+                step_x = available_for_steps / (n - 1)
+                
+                # Enforce minimum step to avoid total collapse
+                min_step = 40
+                if step_x < min_step:
+                    step_x = min_step
+
+        start_y = 20
+        current_x = start_x
+        
+        for i, pixmap in enumerate(self.images):
+            # Source Rect
+            src_rect = QRectF(pixmap.rect())
+            
+            # Target Quad (Trapezoid)
+            # Left side: normal height
+            # Right side: reduced height (0.8)
+            h_left = card_h
+            h_right = card_h * 0.8
+            diff = (h_left - h_right) / 2
+            
+            tl = QPointF(current_x, start_y)
+            tr = QPointF(current_x + card_w, start_y + diff)
+            br = QPointF(current_x + card_w, start_y + card_h - diff)
+            bl = QPointF(current_x, start_y + card_h)
+            
+            quad = QPolygonF([tl, tr, br, bl])
+            
+            # Create Transform
+            transform = QTransform()
+            if QTransform.quadToQuad(QPolygonF(src_rect), quad, transform):
+                painter.save()
+                painter.setTransform(transform)
+                painter.drawPixmap(pixmap.rect(), pixmap)
+                painter.restore()
+            
+            # Advance
+            current_x += step_x
 
 class MainWindow(QMainWindow):
     def __init__(self):
@@ -241,6 +405,11 @@ class MainWindow(QMainWindow):
         self.apply_styles()
         
         self.check_login_status()
+        
+        self.toast = Toast(self)
+
+    def show_toast(self, message, is_success=True):
+        self.toast.show_message(message, is_success)
 
     def setup_ui(self):
         central_widget = QWidget()
@@ -305,18 +474,13 @@ class MainWindow(QMainWindow):
 
         # --- Search Bar & Buttons ---
         search_container = QWidget()
-        search_layout = QHBoxLayout(search_container)
+        search_layout = QVBoxLayout(search_container) # Changed to VBox
         search_layout.setContentsMargins(0, 0, 0, 0)
-        search_layout.setSpacing(16)
-        search_layout.setAlignment(Qt.AlignTop) # Align items to top
+        search_layout.setSpacing(12)
+        search_layout.setAlignment(Qt.AlignTop)
         
         self.entry_url = SearchInput()
         search_layout.addWidget(self.entry_url)
-        
-        # Button Container (Analyze + Clear?) - Aligned to bottom of input
-        btn_layout = QVBoxLayout()
-        btn_layout.setSpacing(8)
-        btn_layout.setAlignment(Qt.AlignBottom) # Align buttons to bottom of the input box
         
         self.btn_analyze = QPushButton("ANALYZE")
         self.btn_analyze.setObjectName("PrimaryBtn")
@@ -324,20 +488,25 @@ class MainWindow(QMainWindow):
         self.btn_analyze.setFixedWidth(120)
         self.btn_analyze.setFixedHeight(46)
         self.btn_analyze.clicked.connect(self.analyze_video)
-        btn_layout.addWidget(self.btn_analyze)
         
-        # Add a little spacer at the bottom so it aligns perfectly with the bottom of input box if needed, 
-        # but Qt layouts usually handle this if we set alignment on the layout item.
-        # Actually, if SearchInput is 120px, and button is 46px.
+        # Align button to right
+        actions_layout = QHBoxLayout()
+        actions_layout.setContentsMargins(0, 0, 0, 0)
         
-        search_layout.addLayout(btn_layout)
+        self.lbl_stats = QLabel("")
+        self.lbl_stats.setObjectName("StatsText")
+        actions_layout.addWidget(self.lbl_stats)
+        
+        actions_layout.addStretch()
+        actions_layout.addWidget(self.btn_analyze)
+        
+        search_layout.addLayout(actions_layout)
         
         content_layout.addWidget(search_container)
-        content_layout.addSpacing(4) # Reduce spacing
+        content_layout.addSpacing(4)
 
         # --- Main Content Area ---
         self.content_area = QWidget()
-        # self.content_area.setFixedWidth(1000) # Removed fixed width
         self.content_area.setVisible(False)
         
         # Initialize opacity for animation
@@ -345,44 +514,34 @@ class MainWindow(QMainWindow):
         self.content_opacity.setOpacity(0)
         self.content_area.setGraphicsEffect(self.content_opacity)
         
-        # Vertical Layout: Controls (Top) -> Media (Bottom)
+        # Vertical Layout
         inner_content_layout = QVBoxLayout(self.content_area)
         inner_content_layout.setContentsMargins(0, 0, 0, 0)
         inner_content_layout.setSpacing(20)
         
-        # 1. Controls Row (Progress | Quality | Download)
-        controls_row = QHBoxLayout()
-        controls_row.setSpacing(16)
+        # 1. Info Row (Title | Quality | Download)
+        info_row = QHBoxLayout()
+        info_row.setSpacing(16)
         
-        # Progress Section (Status + Bar in VBox, expanding)
-        progress_section = QVBoxLayout()
-        progress_section.setSpacing(4)
+        self.lbl_video_title = QLabel()
+        self.lbl_video_title.setObjectName("VideoTitle")
+        self.lbl_video_title.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+        # We handle text elision manually or just let layout handle it?
+        # QLabel doesn't auto-elide nicely in HBox without subclass.
+        # But we can just let it be cut off if we set a size policy.
+        self.lbl_video_title.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
+        info_row.addWidget(self.lbl_video_title)
         
-        self.lbl_status = QLabel("Ready")
-        self.lbl_status.setObjectName("StatusText")
-        progress_section.addWidget(self.lbl_status)
-        
-        self.progress_bar = QProgressBar()
-        self.progress_bar.setFixedHeight(6)
-        self.progress_bar.setTextVisible(False)
-        progress_section.addWidget(self.progress_bar)
-        
-        controls_row.addLayout(progress_section, 1) # Stretch factor 1 (Take available space)
-
-        # Quality (Wider)
+        # Quality
         self.combo_quality = QComboBox()
-        # "Highest" is default.
-        # Map labels to QN values or special markers. 
-        # 127: 8K, 120: 4K, 116: 1080P60, 80: 1080P, 64: 720P
         self.combo_quality.addItem("Highest", 999)
         self.combo_quality.addItem("8K", 127)
         self.combo_quality.addItem("4K", 120)
         self.combo_quality.addItem("1080P60", 116)
         self.combo_quality.addItem("1080P", 80)
         self.combo_quality.addItem("720P", 64)
-        
         self.combo_quality.setFixedWidth(140)
-        controls_row.addWidget(self.combo_quality)
+        info_row.addWidget(self.combo_quality)
         
         # Download Button
         self.btn_download = QPushButton("DOWNLOAD")
@@ -391,55 +550,19 @@ class MainWindow(QMainWindow):
         self.btn_download.setFixedWidth(120)
         self.btn_download.setFixedHeight(40)
         self.btn_download.clicked.connect(self.start_download)
-        controls_row.addWidget(self.btn_download)
+        info_row.addWidget(self.btn_download)
         
-        inner_content_layout.addLayout(controls_row)
-
-        # 2. Media Row (Image Left | Text Right - Equal Height)
-        media_row = QHBoxLayout()
-        media_row.setSpacing(24)
-        media_row.setAlignment(Qt.AlignLeft | Qt.AlignTop)
-
-        # Left: Image Container
-        self.image_container = QFrame()
-        self.image_container.setObjectName("ImageContainer")
-        self.image_container.setFixedSize(320, 180) # 16:9 ratio
+        inner_content_layout.addLayout(info_row)
         
-        img_layout = QVBoxLayout(self.image_container)
-        img_layout.setContentsMargins(0, 0, 0, 0)
+        # 2. Progress Row
+        self.progress_bar = QProgressBar()
+        self.progress_bar.setFixedHeight(6)
+        self.progress_bar.setTextVisible(False)
+        inner_content_layout.addWidget(self.progress_bar)
         
-        self.lbl_thumb = QLabel()
-        self.lbl_thumb.setAlignment(Qt.AlignCenter)
-        self.lbl_thumb.setScaledContents(True)
-        img_layout.addWidget(self.lbl_thumb)
-        
-        media_row.addWidget(self.image_container)
-        
-        # Right: Info Area (Same Height as Image)
-        self.info_container = QFrame()
-        self.info_container.setFixedHeight(180) # Match image height
-        
-        info_layout = QVBoxLayout(self.info_container)
-        info_layout.setContentsMargins(0, 4, 0, 4)
-        info_layout.setSpacing(8)
-        
-        self.lbl_video_title = QLabel()
-        self.lbl_video_title.setObjectName("VideoTitle")
-        self.lbl_video_title.setWordWrap(True)
-        self.lbl_video_title.setAlignment(Qt.AlignLeft | Qt.AlignTop)
-        self.lbl_video_title.setMaximumHeight(80) # Limit title height
-        info_layout.addWidget(self.lbl_video_title)
-        
-        self.lbl_video_desc = QLabel()
-        self.lbl_video_desc.setObjectName("VideoDesc")
-        self.lbl_video_desc.setWordWrap(True)
-        self.lbl_video_desc.setAlignment(Qt.AlignLeft | Qt.AlignTop)
-        info_layout.addWidget(self.lbl_video_desc)
-        info_layout.addStretch()
-        
-        media_row.addWidget(self.info_container, 1) # Expand width
-        
-        inner_content_layout.addLayout(media_row)
+        # 3. Image List Row
+        self.image_list = TrapezoidImageList()
+        inner_content_layout.addWidget(self.image_list)
         
         content_layout.addWidget(self.content_area)
 
@@ -447,11 +570,20 @@ class MainWindow(QMainWindow):
         content_layout.addStretch()
 
     def apply_styles(self):
+        # Apply Main Window background color to self (the QMainWindow)
         self.setStyleSheet("""
             QMainWindow {
                 background-color: #F5F5F7; /* Apple System Gray 6 (Light) */
             }
-            QWidget {
+        """)
+
+        # Apply specific widget styles ONLY to central widget contents.
+        # This ensures that child windows (like LoginDialog or QMessageBox) do not inherit these styles,
+        # keeping them fully native/system standard.
+        if hasattr(self, 'centralWidget') and self.centralWidget():
+            self.centralWidget().setStyleSheet("""
+            /* Refined generic selector to avoid hitting QComboBox/QProgressBar unless targeted */
+            QLabel, QLineEdit, QTextEdit, QPushButton {
                 font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", sans-serif;
                 color: #1D1D1F;
             }
@@ -573,40 +705,15 @@ class MainWindow(QMainWindow):
                 color: #86868B; /* System Gray */
                 line-height: 1.4;
             }
+            QLabel#StatsText {
+                font-size: 13px;
+                color: #86868B;
+                font-weight: 500;
+            }
             QLabel#StatusText {
                 font-size: 12px; /* Reduced from 13 */
                 color: #86868B;
                 font-weight: 500;
-            }
-
-            /* --- Combo Box --- */
-            QComboBox {
-                border: 1px solid #D1D1D6;
-                border-radius: 8px;
-                padding: 4px 10px;
-                background-color: #FFFFFF;
-                color: #1D1D1F;
-                font-size: 13px; /* Reduced from 14 */
-            }
-            QComboBox:hover {
-                border: 1px solid #C7C7CC;
-            }
-            QComboBox::drop-down {
-                border: none;
-                width: 24px;
-            }
-            QComboBox::down-arrow {
-                image: none;
-                border-top: 5px solid #86868B;
-                border-left: 5px solid transparent;
-                border-right: 5px solid transparent;
-                margin-right: 10px;
-            }
-            QComboBox QAbstractItemView {
-                background-color: #FFFFFF;
-                color: #1D1D1F;
-                selection-background-color: #F2F2F7;
-                border: 1px solid #E5E5E5;
             }
 
             /* --- Progress Bar --- */
@@ -641,9 +748,7 @@ class MainWindow(QMainWindow):
 
     def handle_auth(self):
         if self.is_logged_in:
-            reply = QMessageBox.question(self, "Logout", "Are you sure you want to logout?",
-                                       QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
-            if reply == QMessageBox.Yes:
+            if self.show_simple_confirm("Logout", "Are you sure you want to logout?"):
                 self.downloader.logout()
                 self.check_login_status()
         else:
@@ -651,12 +756,35 @@ class MainWindow(QMainWindow):
             if dialog.exec() == QDialog.Accepted:
                 self.downloader.save_cookies()
                 self.check_login_status()
-                QMessageBox.information(self, "Success", "Login successful!")
+                self.show_toast("Login successful!", is_success=True)
 
     def check_login_status(self):
         self.login_worker = WorkerThread(self.downloader.get_user_info)
         self.login_worker.finished.connect(self.on_login_check_finished)
         self.login_worker.start()
+
+    def show_simple_alert(self, title, message):
+        """Shows a minimal native-like alert without icons."""
+        msg_box = QMessageBox(self)
+        msg_box.setWindowTitle(title)
+        msg_box.setText(message)
+        msg_box.setStandardButtons(QMessageBox.Ok)
+        msg_box.setDefaultButton(QMessageBox.Ok)
+        msg_box.setIcon(QMessageBox.NoIcon) # Explicitly no icon
+        # Ensure no style sheet interference
+        msg_box.setStyleSheet("")
+        msg_box.exec()
+
+    def show_simple_confirm(self, title, message):
+        """Shows a minimal native-like confirmation without icons."""
+        msg_box = QMessageBox(self)
+        msg_box.setWindowTitle(title)
+        msg_box.setText(message)
+        msg_box.setStandardButtons(QMessageBox.Yes | QMessageBox.No)
+        msg_box.setDefaultButton(QMessageBox.No)
+        msg_box.setIcon(QMessageBox.NoIcon)
+        msg_box.setStyleSheet("")
+        return msg_box.exec() == QMessageBox.Yes
 
     def on_login_check_finished(self, user_info):
         if user_info:
@@ -675,81 +803,6 @@ class MainWindow(QMainWindow):
             self.lbl_avatar.setStyleSheet("border-radius: 14px; background: #F0F0F0;")
             self.lbl_avatar.clear()
 
-    def on_avatar_loaded(self, data):
-        if data:
-            pixmap = QPixmap()
-            pixmap.loadFromData(data)
-            size = 28
-            rounded = QPixmap(size, size)
-            rounded.fill(Qt.transparent)
-            import PySide6.QtGui as QtGui
-            from PySide6.QtGui import QPainter
-            painter = QPainter(rounded)
-            painter.setRenderHint(QPainter.Antialiasing)
-            path = QtGui.QPainterPath()
-            path.addEllipse(0, 0, size, size)
-            painter.setClipPath(path)
-            painter.drawPixmap(0, 0, size, size, pixmap)
-            painter.end()
-            self.lbl_avatar.setPixmap(rounded)
-
-    def analyze_video(self):
-        text = self.entry_url.toPlainText().strip()
-        if not text:
-            return
-            
-        # Parse lines
-        lines = [line.strip() for line in text.splitlines() if line.strip()]
-        if not lines:
-            return
-
-        self.video_queue = lines
-        self.current_info_map = {} # Store info for videos
-        
-        self.btn_analyze.setEnabled(False)
-        self.btn_analyze.setText("Analyzing...")
-        
-        # Analyze the first video to show preview
-        first_url = self.video_queue[0]
-        self.worker = WorkerThread(self.downloader.get_video_info, first_url)
-        self.worker.finished.connect(lambda info: self.on_info_received(info, len(lines)))
-        self.worker.error.connect(self.on_error)
-        self.worker.start()
-
-    def on_info_received(self, info, total_count):
-        self.current_info_map[0] = info # Store info for the first video
-        
-        self.btn_analyze.setEnabled(True)
-        self.btn_analyze.setText("Analyze")
-        
-        # Trigger animation instead of just setVisible
-        self.animate_content_entry()
-        
-        title = info['title']
-        if total_count > 1:
-            title = f"[{total_count} Videos] " + title
-            
-        self.lbl_video_title.setText(title)
-        self.lbl_video_desc.setText(info.get('desc', '')[:120] + '...')
-        
-        # Update download button text
-        if total_count > 1:
-            self.btn_download.setText(f"Download All ({total_count})")
-        else:
-            self.btn_download.setText("Download")
-
-        # Load thumbnail
-        self.thumb_worker = WorkerThread(self.load_image, info['pic'])
-        self.thumb_worker.finished.connect(self.on_thumb_loaded)
-        self.thumb_worker.start()
-        
-        # We don't need to probe capabilities for the dropdown anymore
-        # as the dropdown is now fixed preferences.
-
-    def on_capabilities_received(self, play_info):
-        # Deprecated logic as combo box is fixed now
-        pass
-
     def load_image(self, url):
         try:
             resp = requests.get(url)
@@ -757,69 +810,156 @@ class MainWindow(QMainWindow):
         except:
             return None
 
-    def on_thumb_loaded(self, data):
+    def on_avatar_loaded(self, data):
         if data:
             pixmap = QPixmap()
             pixmap.loadFromData(data)
+            size = 28
+            rounded = QPixmap(size, size)
+            rounded.fill(Qt.transparent)
             
-            # Create a new pixmap for the potentially stacked effect
-            # Size of the container
-            w, h = 320, 180
-            final_pixmap = QPixmap(w, h)
-            final_pixmap.fill(Qt.transparent)
-            
-            painter = QPainter(final_pixmap)
+            painter = QPainter(rounded)
             painter.setRenderHint(QPainter.Antialiasing)
             painter.setRenderHint(QPainter.SmoothPixmapTransform)
             
-            total_videos = len(self.video_queue) if hasattr(self, 'video_queue') else 1
-            
-            # Stack logic: Draw up to 2 cards behind if multiple videos
-            # Stack 2 (furthest back)
-            if total_videos >= 3:
-                painter.save()
-                painter.translate(20, -10) # Offset right and up
-                painter.scale(0.9, 0.9) # Scale down
-                painter.setOpacity(0.5)
-                
-                path = QPainterPath()
-                path.addRoundedRect(0, 0, w, h, 12, 12)
-                painter.setClipPath(path)
-                scaled_img = pixmap.scaled(w, h, Qt.KeepAspectRatioByExpanding, Qt.SmoothTransformation)
-                painter.drawPixmap(0, 0, scaled_img)
-                painter.restore()
-
-            # Stack 1 (middle)
-            if total_videos >= 2:
-                painter.save()
-                painter.translate(10, -5) # Offset right & up
-                painter.scale(0.95, 0.95)
-                painter.setOpacity(0.7)
-                
-                path = QPainterPath()
-                path.addRoundedRect(0, 0, w, h, 12, 12)
-                painter.setClipPath(path)
-                scaled_img = pixmap.scaled(w, h, Qt.KeepAspectRatioByExpanding, Qt.SmoothTransformation)
-                painter.drawPixmap(0, 0, scaled_img)
-                painter.restore()
-
-            # Top Card (Main)
             path = QPainterPath()
-            path.addRoundedRect(0, 0, w, h, 12, 12)
+            path.addEllipse(0, 0, size, size)
             painter.setClipPath(path)
-            scaled_img = pixmap.scaled(w, h, Qt.KeepAspectRatioByExpanding, Qt.SmoothTransformation)
-            painter.drawPixmap(0, 0, scaled_img)
             
+            # Use KeepAspectRatioByExpanding to fill the circle
+            scaled = pixmap.scaled(size, size, Qt.KeepAspectRatioByExpanding, Qt.SmoothTransformation)
+            
+            # Draw centered
+            x = (size - scaled.width()) // 2
+            y = (size - scaled.height()) // 2
+            painter.drawPixmap(x, y, scaled)
             painter.end()
             
-            self.lbl_thumb.setPixmap(final_pixmap)
+            self.lbl_avatar.setPixmap(rounded)
+            # Remove border/background style when image is present to avoid square corners showing
+            self.lbl_avatar.setStyleSheet("background: transparent; border: none;")
+
+    def analyze_video(self):
+        text = self.entry_url.toPlainText().strip()
+        if not text:
+            self.show_toast("Please enter a URL", is_success=False)
+            return
+            
+        # Parse lines
+        raw_lines = [line.strip() for line in text.splitlines() if line.strip()]
+        if not raw_lines:
+            return
+
+        # Deduplicate while preserving order
+        unique_lines = []
+        seen_keys = set()
+        
+        for line in raw_lines:
+            # Try to extract ID for smarter deduplication (e.g. BV123... and BV123.../ are same)
+            key = self.downloader._extract_bvid(line)
+            if not key:
+                key = line # Fallback to raw string if no BVID found
+            
+            if key not in seen_keys:
+                unique_lines.append(line)
+                seen_keys.add(key)
+        
+        # Stats
+        self.stats_total_input = len(raw_lines)
+        self.stats_duplicates = len(raw_lines) - len(unique_lines)
+        
+        self.lbl_stats.setText(f"Analyzing {len(unique_lines)} URLs... (Input: {self.stats_total_input}, Duplicates: {self.stats_duplicates})")
+
+        self.video_queue = unique_lines
+        self.current_info_map = {} # Reset
+        
+        self.btn_analyze.setEnabled(False)
+        self.btn_analyze.setText("Analyzing...")
+        
+        # Batch fetch all info
+        self.worker = WorkerThread(self.fetch_batch_info, unique_lines)
+        self.worker.finished.connect(self.on_batch_info_received)
+        self.worker.error.connect(self.on_error)
+        self.worker.start()
+
+    def fetch_batch_info(self, urls):
+        results = []
+        for url in urls:
+            try:
+                info = self.downloader.get_video_info(url)
+                results.append(info)
+            except Exception as e:
+                print(f"Error fetching {url}: {e}")
+                results.append(None)
+        return results
+
+    def on_batch_info_received(self, results):
+        valid_infos = []
+        for i, info in enumerate(results):
+            if info:
+                self.current_info_map[i] = info
+                valid_infos.append(info)
+        
+        # Update Stats
+        success_count = len(valid_infos)
+        failed_count = len(results) - success_count
+        self.lbl_stats.setText(f"Total: {self.stats_total_input} | Success: {success_count} | Failed: {failed_count} | Duplicates: {self.stats_duplicates}")
+
+        if not valid_infos:
+            self.on_error("Failed to fetch info for all videos")
+            return
+
+        self.btn_analyze.setEnabled(True)
+        self.btn_analyze.setText("Analyze")
+        
+        self.animate_content_entry()
+        
+        # Update UI with first valid info
+        first_info = valid_infos[0]
+        title = first_info['title']
+        count = len(valid_infos)
+        if count > 1:
+            title = f"[{count} Videos] {title}"
+        
+        # Set title (elide handled by layout/size policy)
+        self.lbl_video_title.setText(title)
+        
+        if count > 1:
+            self.btn_download.setText(f"Download All ({count})")
+        else:
+            self.btn_download.setText("Download")
+            
+        # Start fetching images
+        img_urls = [info['pic'] for info in valid_infos]
+        self.thumb_worker = WorkerThread(self.fetch_batch_images, img_urls)
+        self.thumb_worker.finished.connect(self.on_batch_images_loaded)
+        self.thumb_worker.start()
+
+    def fetch_batch_images(self, urls):
+        pixmaps = []
+        for url in urls:
+            try:
+                content = requests.get(url).content
+                pixmap = QPixmap()
+                if pixmap.loadFromData(content):
+                    pixmaps.append(pixmap)
+            except:
+                pass
+        return pixmaps
+
+    def on_batch_images_loaded(self, pixmaps):
+        self.image_list.set_images(pixmaps)
+
+    def on_capabilities_received(self, play_info):
+        # Deprecated logic as combo box is fixed now
+        pass
 
     def on_error(self, err_msg):
         self.btn_analyze.setEnabled(True)
         self.btn_analyze.setText("Analyze")
         self.btn_download.setEnabled(True)
         self.btn_download.setText("Download")
-        QMessageBox.critical(self, "Error", err_msg)
+        self.show_toast(err_msg, is_success=False)
 
     def start_download(self):
         if not self.video_queue:
@@ -838,8 +978,7 @@ class MainWindow(QMainWindow):
             self.is_downloading = False
             self.btn_download.setEnabled(True)
             self.btn_download.setText("Download")
-            self.lbl_status.setText("All Done")
-            QMessageBox.information(self, "Success", "All downloads completed!")
+            self.show_toast("All downloads completed!", is_success=True)
             # Clear input and reset state
             self.entry_url.clear()
             self.video_queue = []
@@ -849,7 +988,6 @@ class MainWindow(QMainWindow):
             return
             
         url = self.video_queue[self.current_download_index]
-        self.lbl_status.setText(f"Processing ({self.current_download_index + 1}/{len(self.video_queue)})...")
         
         # We need to get info first if we don't have it (we only have it for the first one usually)
         if self.current_download_index in self.current_info_map:
@@ -944,7 +1082,7 @@ class MainWindow(QMainWindow):
 
         self.dl_worker = DownloadWorker(self.downloader, download_url, filepath, is_dash, dash_info)
         self.dl_worker.progress.connect(self.progress_bar.setValue)
-        self.dl_worker.status.connect(self.lbl_status.setText)
+        # self.dl_worker.status.connect(self.lbl_status.setText) # lbl_status removed
         self.dl_worker.finished.connect(self.on_download_finished)
         self.dl_worker.error.connect(self.on_download_error)
         self.dl_worker.start()
@@ -956,6 +1094,7 @@ class MainWindow(QMainWindow):
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)
+    app.setWindowIcon(QIcon(resource_path("bili.png")))
     window = MainWindow()
     window.show()
     sys.exit(app.exec())
