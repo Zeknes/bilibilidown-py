@@ -4,18 +4,26 @@ import subprocess
 import shutil
 import platform
 import multiprocessing
+import datetime
 
-def create_deb(source_dir, output_dir, version="1.0.0"):
+# Application Metadata
+APP_PKG_NAME = "bilibilidown"
+APP_NAME = "BiliDown"
+APP_VERSION = "1.1.0"
+APP_RELEASE = "1"
+APP_DESCRIPTION = "Bilibili Video Downloader with GUI"
+APP_MAINTAINER = "BiliDown Team"
+APP_EMAIL = "zeknes@163.com"
+APP_LICENSE = "MIT"
+APP_URL = "https://github.com/zeknes/bilibilidown-py"
+
+def create_deb(source_dir, output_dir, version=APP_VERSION):
     """
-    Create a .deb package for Linux distribution
+    Create a .deb package for Linux distribution (supports both dpkg-deb and manual ar method)
     """
-    print("📦 Creating DEB package...")
+    print("\n=== Creating DEB Package ===")
     
-    # Check if dpkg-deb is installed
-    if not shutil.which("dpkg-deb"):
-        print("⚠️ 'dpkg-deb' not found. Skipping DEB creation.")
-        return
-
+    # Determine Architecture
     arch = platform.machine()
     if arch == "x86_64":
         deb_arch = "amd64"
@@ -24,223 +32,277 @@ def create_deb(source_dir, output_dir, version="1.0.0"):
     else:
         deb_arch = arch
 
-    package_name = "bilibilidown"
+    # Setup build directories
     build_root = os.path.join(output_dir, "deb_build")
-    
-    # Clean previous build dir
     if os.path.exists(build_root):
         shutil.rmtree(build_root)
         
-    # Create directory structure
-    # /opt/bilibilidown -> application files
-    # /usr/share/applications -> desktop shortcut
-    # /usr/share/icons -> icon
+    deb_opt = os.path.join(build_root, "opt", APP_PKG_NAME)
+    deb_bin = os.path.join(build_root, "usr", "bin")
+    deb_desktop = os.path.join(build_root, "usr", "share", "applications")
+    deb_icon = os.path.join(build_root, "usr", "share", "pixmaps")
+    deb_debian = os.path.join(build_root, "DEBIAN")
     
-    opt_dir = os.path.join(build_root, "opt", package_name)
-    os.makedirs(opt_dir)
+    for d in [deb_opt, deb_bin, deb_desktop, deb_icon, deb_debian]:
+        os.makedirs(d, exist_ok=True)
     
     # Copy application files
-    # source_dir is 'main.dist' which contains the binary and dependencies
-    # We copy the content of source_dir to opt_dir
+    print(f"   Copying application files from {source_dir}...")
     if os.path.isdir(source_dir):
-        shutil.copytree(source_dir, opt_dir, dirs_exist_ok=True)
+        shutil.copytree(source_dir, deb_opt, dirs_exist_ok=True)
     else:
-        # If source is a single file (not likely with standalone, but just in case)
-        shutil.copy2(source_dir, opt_dir)
+        shutil.copy2(source_dir, deb_opt)
         
-    # Create control file
-    debian_dir = os.path.join(build_root, "DEBIAN")
-    os.makedirs(debian_dir)
+    # Ensure executable permissions
+    main_exec = os.path.join(deb_opt, "main")
+    if os.path.exists(main_exec):
+        os.chmod(main_exec, 0o755)
     
-    control_content = f"""Package: {package_name}
-Version: {version}
-Section: utils
-Priority: optional
-Architecture: {deb_arch}
-Maintainer: BiliDown Developer <zeknes@163.com>
-Description: Bilibili Video Downloader
- A desktop application to download videos from Bilibili.
-"""
-    with open(os.path.join(debian_dir, "control"), "w") as f:
-        f.write(control_content)
-        
-    # Create postinst script to set permissions
-    postinst_content = f"""#!/bin/sh
-chmod +x /opt/{package_name}/main
-"""
-    postinst_path = os.path.join(debian_dir, "postinst")
-    with open(postinst_path, "w") as f:
-        f.write(postinst_content)
-    os.chmod(postinst_path, 0o755)
+    # Create launcher script
+    launcher_path = os.path.join(deb_bin, APP_PKG_NAME)
+    with open(launcher_path, 'w') as f:
+        f.write(f"""#!/bin/bash
+cd /opt/{APP_PKG_NAME}
+exec ./main "$@"
+""")
+    os.chmod(launcher_path, 0o755)
 
     # Create .desktop file
-    apps_dir = os.path.join(build_root, "usr", "share", "applications")
-    os.makedirs(apps_dir)
-    
-    desktop_content = f"""[Desktop Entry]
-Name=BiliDown
-Comment=Download Bilibili Videos
-Exec=/opt/{package_name}/main
-Icon={package_name}
-Terminal=false
+    with open(os.path.join(deb_desktop, f"{APP_PKG_NAME}.desktop"), "w") as f:
+        f.write(f"""[Desktop Entry]
+Version=1.0
 Type=Application
-Categories=Utility;Network;
-"""
-    with open(os.path.join(apps_dir, f"{package_name}.desktop"), "w") as f:
-        f.write(desktop_content)
+Name={APP_NAME}
+GenericName=Bilibili Video Downloader
+Comment={APP_DESCRIPTION}
+Exec={APP_PKG_NAME}
+Icon={APP_PKG_NAME}
+Terminal=false
+Categories=Network;AudioVideo;Qt;
+Keywords=bilibili;video;download;
+""")
         
     # Copy icon
-    # Assuming bili.png exists in current directory
     if os.path.exists("bili.png"):
-        icon_dir = os.path.join(build_root, "usr", "share", "icons", "hicolor", "512x512", "apps")
-        os.makedirs(icon_dir)
-        shutil.copy2("bili.png", os.path.join(icon_dir, f"{package_name}.png"))
+        shutil.copy2("bili.png", os.path.join(deb_icon, f"{APP_PKG_NAME}.png"))
         
-    # Build package
-    deb_filename = f"{package_name}_{version}_{deb_arch}.deb"
-    deb_path = os.path.join(output_dir, deb_filename)
+    # Calculate installed size
+    total_size = 0
+    for dirpath, dirnames, filenames in os.walk(deb_opt):
+        for filename in filenames:
+            filepath = os.path.join(dirpath, filename)
+            if not os.path.islink(filepath):
+                total_size += os.path.getsize(filepath)
+    installed_size = total_size // 1024
     
-    try:
-        subprocess.check_call(["dpkg-deb", "--build", build_root, deb_path])
-        print(f"✅ DEB package created: {deb_path}")
-    except subprocess.CalledProcessError as e:
-        print(f"❌ Failed to create DEB package: {e}")
+    # Create control file
+    with open(os.path.join(deb_debian, "control"), "w") as f:
+        f.write(f"""Package: {APP_PKG_NAME}
+Version: {version}-{APP_RELEASE}
+Section: net
+Priority: optional
+Architecture: {deb_arch}
+Installed-Size: {installed_size}
+Maintainer: {APP_MAINTAINER} <{APP_EMAIL}>
+Description: {APP_DESCRIPTION}
+ BiliDown is a GUI application for downloading videos from Bilibili.
+ It supports multiple video qualities and formats with a modern interface.
+""")
         
-    # Cleanup build root
-    # shutil.rmtree(build_root) 
+    # Create postinst script
+    postinst_path = os.path.join(deb_debian, "postinst")
+    with open(postinst_path, "w") as f:
+        f.write(f"""#!/bin/bash
+set -e
+chmod +x /opt/{APP_PKG_NAME}/main 2>/dev/null || true
+exit 0
+""")
+    os.chmod(postinst_path, 0o755)
 
-def create_rpm(source_dir, output_dir, version="1.0.0"):
+    deb_filename = f"{APP_PKG_NAME}_{version}-{APP_RELEASE}_{deb_arch}.deb"
+    deb_path = os.path.join(output_dir, deb_filename)
+
+    # Try dpkg-deb first
+    if shutil.which("dpkg-deb"):
+        try:
+            subprocess.run(["dpkg-deb", "--build", build_root, deb_path], check=True)
+            print(f"✅ DEB package created: {deb_path}")
+            shutil.rmtree(build_root)
+            return
+        except subprocess.CalledProcessError:
+            print("⚠️ dpkg-deb failed, trying manual method...")
+    
+    # Manual fallback using ar/tar
+    print("   Using manual construction (ar + tar)...")
+    try:
+        # Create data.tar.gz
+        data_tar = os.path.join(output_dir, "data.tar.gz")
+        subprocess.run([
+            "tar", "-czf", data_tar,
+            "-C", build_root,
+            "--exclude=DEBIAN", "."
+        ], check=True)
+        
+        # Create control.tar.gz
+        control_tar = os.path.join(output_dir, "control.tar.gz")
+        subprocess.run([
+            "tar", "-czf", control_tar,
+            "-C", deb_debian, "."
+        ], check=True)
+        
+        # Create debian-binary
+        debian_binary = os.path.join(output_dir, "debian-binary")
+        with open(debian_binary, 'w') as f:
+            f.write("2.0\n")
+            
+        # Combine with ar
+        if shutil.which("ar"):
+            if os.path.exists(deb_path):
+                os.remove(deb_path)
+            subprocess.run([
+                "ar", "r", deb_path,
+                debian_binary, control_tar, data_tar
+            ], check=True)
+            print(f"✅ DEB package created (manual): {deb_path}")
+        else:
+            print("❌ 'ar' utility not found. Cannot create DEB package.")
+            
+        # Cleanup temp files
+        for f in [data_tar, control_tar, debian_binary]:
+            if os.path.exists(f):
+                os.remove(f)
+        shutil.rmtree(build_root)
+            
+    except Exception as e:
+        print(f"❌ Failed to create DEB package: {e}")
+
+def create_rpm(source_dir, output_dir, version=APP_VERSION):
     """
     Create a .rpm package for Linux distribution using rpmbuild
     """
-    print("📦 Creating RPM package...")
+    print("\n=== Creating RPM Package ===")
     
     if not shutil.which("rpmbuild"):
         print("⚠️ 'rpmbuild' not found. Skipping RPM creation.")
         return
 
-    package_name = "bilibilidown"
-    arch = platform.machine()
-    
     # RPM build structure
     rpm_root = os.path.join(output_dir, "rpm_build")
-    for d in ["BUILD", "RPMS", "SOURCES", "SPECS", "SRPMS"]:
+    if os.path.exists(rpm_root):
+        shutil.rmtree(rpm_root)
+        
+    for d in ["BUILD", "BUILDROOT", "RPMS", "SOURCES", "SPECS", "SRPMS"]:
         os.makedirs(os.path.join(rpm_root, d), exist_ok=True)
-        
-    # We need to tar the source to put in SOURCES
-    # But since we have a binary distribution, we can trick it or use a simpler spec
-    # Let's try to copy files directly in %install without a source tarball if possible
-    # But rpmbuild really wants a source.
-    # We will create a fake tarball of the binary distribution
     
-    print("   Preparing sources for RPM...")
-    source_tar = f"{package_name}-{version}.tar.gz"
-    tar_path = os.path.join(rpm_root, "SOURCES", source_tar)
+    spec_file = os.path.join(rpm_root, "SPECS", f"{APP_PKG_NAME}.spec")
+    changelog_date = datetime.datetime.now().strftime("%a %b %d %Y")
     
-    # Create tarball of the dist folder
-    # We want the tarball to contain a folder named bilibilidown-1.0.0 containing the files
-    temp_src = os.path.join(output_dir, f"{package_name}-{version}")
-    if os.path.exists(temp_src):
-        shutil.rmtree(temp_src)
+    # Determine architecture
+    arch = platform.machine()
     
-    if os.path.isdir(source_dir):
-        shutil.copytree(source_dir, temp_src)
-    else:
-        os.makedirs(temp_src)
-        shutil.copy2(source_dir, temp_src)
-        
-    # Add icon to source
-    if os.path.exists("bili.png"):
-        shutil.copy2("bili.png", temp_src)
-        
-    # Create tar
-    subprocess.check_call(["tar", "-czf", tar_path, "-C", output_dir, f"{package_name}-{version}"])
+    # We will simply copy the binaries in %install, no need for Source0 tarball
+    # This is a binary repackaging
     
-    # Cleanup temp src
-    shutil.rmtree(temp_src)
-    
-    # Create SPEC file
-    spec_content = f"""
-Name:           {package_name}
+    with open(spec_file, 'w') as f:
+        f.write(f"""Name:           {APP_PKG_NAME}
 Version:        {version}
-Release:        1
-Summary:        Bilibili Video Downloader
-License:        MIT
-URL:            https://github.com/Zeknes/bilibilidown-py
-Source0:        %{{name}}-%{{version}}.tar.gz
+Release:        {APP_RELEASE}%{{?dist}}
+Summary:        {APP_DESCRIPTION}
+License:        {APP_LICENSE}
+URL:            {APP_URL}
+BuildArch:      {arch}
+AutoReqProv:    no
 
 %description
-A GUI tool to download videos from Bilibili.
+BiliDown is a GUI application for downloading videos from Bilibili.
+It supports multiple video qualities and formats with a modern interface.
 
 %prep
-%setup -q
+# No prep
 
 %build
-# Nothing to build, we have binaries
+# No build
 
 %install
-rm -rf $RPM_BUILD_ROOT
-mkdir -p $RPM_BUILD_ROOT/opt/{package_name}
-mkdir -p $RPM_BUILD_ROOT/usr/share/applications
-mkdir -p $RPM_BUILD_ROOT/usr/share/icons/hicolor/512x512/apps
+rm -rf %{{buildroot}}
+mkdir -p %{{buildroot}}/opt/{APP_PKG_NAME}
+mkdir -p %{{buildroot}}/usr/bin
+mkdir -p %{{buildroot}}/usr/share/applications
+mkdir -p %{{buildroot}}/usr/share/pixmaps
 
-# Copy binary files
-cp -r * $RPM_BUILD_ROOT/opt/{package_name}/
+# Copy application files
+# We need to copy from the external source directory
+cp -a {os.path.abspath(source_dir)}/* %{{buildroot}}/opt/{APP_PKG_NAME}/
+
+# Ensure main is executable
+chmod 755 %{{buildroot}}/opt/{APP_PKG_NAME}/main
+
+# Create launcher
+cat > %{{buildroot}}/usr/bin/{APP_PKG_NAME} << 'EOF'
+#!/bin/bash
+cd /opt/{APP_PKG_NAME}
+exec ./main "$@"
+EOF
+chmod 755 %{{buildroot}}/usr/bin/{APP_PKG_NAME}
 
 # Create desktop file
-cat > $RPM_BUILD_ROOT/usr/share/applications/{package_name}.desktop <<EOF
+cat > %{{buildroot}}/usr/share/applications/{APP_PKG_NAME}.desktop << 'EOF'
 [Desktop Entry]
-Name=BiliDown
-Comment=Download Bilibili Videos
-Exec=/opt/{package_name}/main
-Icon={package_name}
-Terminal=false
+Version=1.0
 Type=Application
-Categories=Utility;Network;
+Name={APP_NAME}
+GenericName=Bilibili Video Downloader
+Comment={APP_DESCRIPTION}
+Exec={APP_PKG_NAME}
+Icon={APP_PKG_NAME}
+Terminal=false
+Categories=Network;AudioVideo;Qt;
+Keywords=bilibili;video;download;
 EOF
 
-# Install icon
-if [ -f bili.png ]; then
-    cp bili.png $RPM_BUILD_ROOT/usr/share/icons/hicolor/512x512/apps/{package_name}.png
+# Copy icon
+if [ -f "{os.path.abspath('bili.png')}" ]; then
+    cp "{os.path.abspath('bili.png')}" %{{buildroot}}/usr/share/pixmaps/{APP_PKG_NAME}.png
 fi
 
-# Cleanup source files that shouldn't be in /opt
-rm -f $RPM_BUILD_ROOT/opt/{package_name}/bili.png
-rm -f $RPM_BUILD_ROOT/opt/{package_name}/{package_name}.desktop
-
 %files
-/opt/{package_name}
-/usr/share/applications/{package_name}.desktop
-/usr/share/icons/hicolor/512x512/apps/{package_name}.png
+%defattr(-,root,root,-)
+/opt/{APP_PKG_NAME}
+/usr/bin/{APP_PKG_NAME}
+/usr/share/applications/{APP_PKG_NAME}.desktop
+/usr/share/pixmaps/{APP_PKG_NAME}.png
 
 %changelog
-* Mon Dec 16 2024 Developer <dev@example.com> - 1.0.0-1
-- Initial release
-"""
+* {changelog_date} {APP_MAINTAINER} <{APP_EMAIL}> - {version}-{APP_RELEASE}
+- Automated build release
+""")
 
-    spec_path = os.path.join(rpm_root, "SPECS", f"{package_name}.spec")
-    with open(spec_path, "w") as f:
-        f.write(spec_content)
-        
-    # Build RPM
+    print(f"   Building RPM package using spec: {spec_file}")
     try:
         subprocess.check_call([
             "rpmbuild", 
-            "--define", f"_topdir {rpm_root}", 
-            "-bb", spec_path
-        ])
+            "--define", f"_topdir {os.path.abspath(rpm_root)}", 
+            "-bb", spec_file
+        ], stdout=subprocess.DEVNULL) # Suppress verbose output
         
-        # Move RPM to output dir
-        rpm_arch_dir = os.path.join(rpm_root, "RPMS", arch)
-        if not os.path.exists(rpm_arch_dir):
-             # Try x86_64 if machine is different
-             rpm_arch_dir = os.path.join(rpm_root, "RPMS", "x86_64")
-             
-        if os.path.exists(rpm_arch_dir):
-            for file in os.listdir(rpm_arch_dir):
+        # Find and move RPM
+        rpms_dir = os.path.join(rpm_root, "RPMS")
+        found = False
+        for root, dirs, files in os.walk(rpms_dir):
+            for file in files:
                 if file.endswith(".rpm"):
-                    shutil.move(os.path.join(rpm_arch_dir, file), os.path.join(output_dir, file))
-                    print(f"✅ RPM package created: {os.path.join(output_dir, file)}")
+                    src = os.path.join(root, file)
+                    dst = os.path.join(output_dir, file)
+                    shutil.move(src, dst)
+                    print(f"✅ RPM package created: {dst}")
+                    found = True
+        
+        if not found:
+            print("❌ RPM build finished but no .rpm file found.")
+            
+        # Cleanup
+        shutil.rmtree(rpm_root)
+        
     except subprocess.CalledProcessError as e:
         print(f"❌ Failed to create RPM package: {e}")
 
