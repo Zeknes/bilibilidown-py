@@ -66,7 +66,14 @@ class BiliDownloader:
         self.session = requests.Session()
         self.session.headers.update(self.headers)
         self.authenticator = BiliAuthenticator(self.session)
-        self.cookie_file = "cookies.pkl"
+        
+        # Save cookies in user home directory to ensure persistence across app moves
+        home_dir = os.path.expanduser("~")
+        config_dir = os.path.join(home_dir, ".bilibilidown")
+        if not os.path.exists(config_dir):
+            os.makedirs(config_dir)
+            
+        self.cookie_file = os.path.join(config_dir, "cookies.pkl")
         self.load_cookies()
 
     def save_cookies(self):
