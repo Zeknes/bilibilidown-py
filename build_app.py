@@ -57,7 +57,7 @@ Version: {version}
 Section: utils
 Priority: optional
 Architecture: {deb_arch}
-Maintainer: BiliDown Developer <developer@example.com>
+Maintainer: BiliDown Developer <zeknes@163.com>
 Description: Bilibili Video Downloader
  A desktop application to download videos from Bilibili.
 """
