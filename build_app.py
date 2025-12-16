@@ -8,6 +8,11 @@ def build():
     
     # Check if ccache is available (optional but recommended for speed)
     # subprocess.call(["brew", "install", "ccache"]) 
+    
+    # Get CPU count for parallel compilation
+    import multiprocessing
+    n_cores = multiprocessing.cpu_count()
+    print(f"🔥 Using {n_cores} cores for compilation")
 
     cmd = [
         sys.executable, "-m", "nuitka",
@@ -16,6 +21,7 @@ def build():
         "--enable-plugin=pyside6",    # Smart dependency handling for PySide6
         "--show-progress",
         "--show-memory",
+        f"--jobs={n_cores}",          # Enable parallel compilation
         "--output-dir=dist_nuitka",
         "--macos-app-name=BiliDown",
         "--macos-app-icon=bili.png",  # Nuitka handles png to icns conversion automatically if capable
