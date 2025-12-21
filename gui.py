@@ -921,8 +921,14 @@ class MainWindow(QMainWindow):
         if count > 1:
             title = f"[{count} Videos] {title}"
         
+        # Truncate title to avoid stretching window
+        max_len = 30
+        if len(title) > max_len:
+            title = title[:max_len] + "..."
+
         # Set title (elide handled by layout/size policy)
         self.lbl_video_title.setText(title)
+        self.lbl_video_title.setToolTip(first_info['title'])
         
         if count > 1:
             self.btn_download.setText(f"Download All ({count})")
